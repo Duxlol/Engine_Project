@@ -484,36 +484,6 @@ Figure createCone(const int n, const double h, const std::vector<double>& color)
     return cone;
 }
 
-// Figure createSphere(const int n, const std::vector<double>& color) {
-//     Figure sphere;
-//     sphere.color = color;
-//
-//     // Start with an icosahedron
-//     Figure ico = createIco(color);
-//     sphere.points = ico.points;
-//
-//     // Clear any existing faces (we'll create our own)
-//     sphere.faces.clear();
-//
-//     // Subdivide each face of the icosahedron
-//     for (const Face& face : ico.faces) {
-//         if (face.point_indices.size() == 3) {
-//             subdivideTriangle(sphere,
-//                               face.point_indices[0],
-//                               face.point_indices[1],
-//                               face.point_indices[2],
-//                               n);
-//         }
-//     }
-//
-//     // Normalize all points to the unit sphere
-//     for (Vector3D& point : sphere.points) {
-//         point.normalise();
-//     }
-//
-//     return sphere;
-// }
-
 Figure createTorus(const double r, const double R, const int n, const int m, const std::vector<double>& color) {
     Figure torus;
     torus.color = color;
@@ -552,6 +522,159 @@ Figure createTorus(const double r, const double R, const int n, const int m, con
 
     return torus;
 }
+
+Figure createSphere(int iterations, const std::vector<double>& color) {
+    Figure sphere = createIco(color); // Start met een icosaëder
+
+    for (int it = 0; it < iterations; it++) {
+        std::vector<Face> newFaces;
+        std::map<std::pair<int, int>, int> edgeMidpointCache;
+
+        // Hulpfunctie om middenpunten te vinden of te genereren
+        auto getMidpoint = [&](int p1Idx, int p2Idx) {
+            if (p1Idx > p2Idx) std::swap(p1Idx, p2Idx);
+            auto key = std::make_pair(p1Idx, p2Idx);
+
+            if (edgeMidpointCache.count(key)) {
+                return edgeMidpointCache[key];
+            }
+
+            Vector3D p1 = sphere.points[p1Idx];
+            Vector3D p2 = sphere.points[p2Idx];
+            Vector3D midpoint = (p1 + p2) * 0.5;
+            midpoint.normalise(); // Zorg dat het punt op de bol ligt
+
+            sphere.points.push_back(midpoint);
+            int newIdx = sphere.points.size() - 1;
+            edgeMidpointCache[key] = newIdx;
+            return newIdx;
+        };
+
+        // Subdivide elk driehoekig vlak
+        for (const Face& face : sphere.faces) {
+            int a = face.point_indices[0];
+            int b = face.point_indices[1];
+            int c = face.point_indices[2];
+
+            int ab = getMidpoint(a, b);
+            int bc = getMidpoint(b, c);
+            int ca = getMidpoint(c, a);
+
+            // Voeg 4 nieuwe driehoeken toe
+            newFaces.push_back(Face{{a, ab, ca}});
+            newFaces.push_back(Face{{b, bc, ab}});
+            newFaces.push_back(Face{{c, ca, bc}});
+            newFaces.push_back(Face{{ab, bc, ca}});
+        }
+        sphere.faces = newFaces;
+    }
+
+    // Genereer lijnen voor wireframe
+    for (const Face& face : sphere.faces) {
+        for (size_t i = 0; i < face.point_indices.size(); i++) {
+            int j = (i + 1) % face.point_indices.size();
+            sphere.lines.push_back({face.point_indices[i], face.point_indices[j]});
+        }
+    }
+
+    return sphere;
+}
+
+// Figure parse3DLSystem(const std::string& filename, const std::vector<double>& color) {
+//     std::ifstream in(filename);
+//     LParser::LSystem3D lSystem;
+//     in >> lSystem;
+//     in.close();
+//
+//     Figure figure;
+//     figure.color = color;
+//
+//     std::string current = lSystem.get_initiator();
+//     for (unsigned int i = 0; i < lSystem.get_nr_iterations(); i++) {
+//         std::string next;
+//         for (char c : current) {
+//             if (lSystem.get_alphabet().count(c)) {
+//                 next += lSystem.get_replacement(c);
+//             } else {
+//                 next += c;
+//             }
+//         }
+//         current = next;
+//     }
+//
+//     Vector3D position(0, 0, 0);
+//     Vector3D H(1, 0, 0); // Heading
+//     Vector3D L(0, 1, 0); // Left
+//     Vector3D U(0, 0, 1); // Up
+//     std::stack<std::tuple<Vector3D, Vector3D, Vector3D, Vector3D>> stateStack;
+//     double angle = lSystem.get_angle() * (M_PI / 180.0);
+//
+//     std::vector<Vector3D> points;
+//     std::vector<std::pair<int, int>> lines;
+//     int pointIdx = 0;
+//
+//     for (char c : current) {
+//         switch (c) {
+//             case '+': // Draai linksom om H-as
+//                 L = L * cos(angle) + U * sin(angle);
+//                 U = L.cross(H);
+//                 break;
+//             case '-': // Draai rechtsom om H-as
+//                 L = L * cos(-angle) + U * sin(-angle);
+//                 U = L.cross(H);
+//                 break;
+//             case '^': // Draai om L-as
+//                 H = H * cos(angle) + U * sin(angle);
+//                 U = H.cross(L);
+//                 break;
+//             case '&': // Draai om L-as (negatief)
+//                 H = H * cos(-angle) + U * sin(-angle);
+//                 U = H.cross(L);
+//                 break;
+//             case '\\': // Roll linksom om U-as
+//                 H = H * cos(angle) + L * sin(angle);
+//                 L = H.cross(U);
+//                 break;
+//             case '/': // Roll rechtsom om U-as
+//                 H = H * cos(-angle) + L * sin(-angle);
+//                 L = H.cross(U);
+//                 break;
+//             case '|': // Keer richting om
+//                 H = H * -1;
+//                 L = L * -1;
+//                 break;
+//             case '(': // Sla staat op
+//                 stateStack.push({position, H, L, U});
+//                 break;
+//             case ')': // Herstel staat
+//                 if (!stateStack.empty()) {
+//                     auto [savedPos, savedH, savedL, savedU] = stateStack.top();
+//                     stateStack.pop();
+//                     position = savedPos;
+//                     H = savedH;
+//                     L = savedL;
+//                     U = savedU;
+//                 }
+//                 break;
+//             default:
+//                 if (lSystem.draw(c)) {
+//                     Vector3D newPos = position + H;
+//                     points.push_back(position);
+//                     points.push_back(newPos);
+//                     lines.push_back({pointIdx, pointIdx + 1});
+//                     pointIdx += 2;
+//                     position = newPos;
+//                 } else {
+//                     position = position + H;
+//                 }
+//                 break;
+//         }
+//     }
+//
+//     figure.points = points;
+//     figure.lines = lines;
+//     return figure;
+// }
 
 std::vector<Line2D> generateLinesFromLSystem(const LParser::LSystem2D &lsystem, const std::vector<double> &color) {
     std::vector<Line2D> lines;
@@ -643,10 +766,10 @@ Figure parseFigure(const ini::Configuration& configuration, int index) {
         double h = configuration[sectionName]["height"].as_double_or_die();
         return createCone(n, h, figure.color);
     }
-    // else if (type == "Sphere") {
-    //     int n = configuration[sectionName]["n"].as_int_or_die();
-    //     return createSphere(n, figure.color);
-    // }
+    else if (type == "Sphere") {
+        int n = configuration[sectionName]["n"].as_int_or_die();
+        return createSphere(n, figure.color);
+    }
     else if (type == "Torus") {
         double R = configuration[sectionName]["R"].as_double_or_die();
         double r = configuration[sectionName]["r"].as_double_or_die();
@@ -654,6 +777,12 @@ Figure parseFigure(const ini::Configuration& configuration, int index) {
         int m = configuration[sectionName]["m"].as_int_or_die();
         return createTorus(R, r, n, m, figure.color);
     }
+
+    // else if (type == "3DLSystem") {
+    //     std::string inputfile = configuration[sectionName]["inputfile"].as_string_or_die();
+    //     return parse3DLSystem(inputfile, figure.color);
+    // }
+
     else if (type == "LineDrawing") {
         // parse points for custom figure
         int nrPoints = configuration[sectionName]["nrPoints"].as_int_or_die();
