@@ -335,6 +335,224 @@ Figure createOcta(const std::vector<double>& color) {
     return octa;
 }
 
+Figure createIco(const std::vector<double>& color) {
+    Figure ico;
+    ico.color = color;
+
+    const double sqrt5_2 = sqrt(5.0) / 2.0;
+
+    ico.points = {
+        Vector3D::point(0, 0, sqrt5_2), // Punt 0 (top)
+        Vector3D::point(cos(0*2*M_PI/5), sin(0*2*M_PI/5), 0.5), // Punt 1
+        Vector3D::point(cos(1*2*M_PI/5), sin(1*2*M_PI/5), 0.5), // Punt 2
+        Vector3D::point(cos(2*2*M_PI/5), sin(2*2*M_PI/5), 0.5), // Punt 3
+        Vector3D::point(cos(3*2*M_PI/5), sin(3*2*M_PI/5), 0.5), // Punt 4
+        Vector3D::point(cos(4*2*M_PI/5), sin(4*2*M_PI/5), 0.5), // Punt 5
+        Vector3D::point(cos(M_PI/5 + 0*2*M_PI/5), sin(M_PI/5 + 0*2*M_PI/5), -0.5), // Punt 6
+        Vector3D::point(cos(M_PI/5 + 1*2*M_PI/5), sin(M_PI/5 + 1*2*M_PI/5), -0.5), // Punt 7
+        Vector3D::point(cos(M_PI/5 + 2*2*M_PI/5), sin(M_PI/5 + 2*2*M_PI/5), -0.5), // Punt 8
+        Vector3D::point(cos(M_PI/5 + 3*2*M_PI/5), sin(M_PI/5 + 3*2*M_PI/5), -0.5), // Punt 9
+        Vector3D::point(cos(M_PI/5 + 4*2*M_PI/5), sin(M_PI/5 + 4*2*M_PI/5), -0.5), // Punt 10
+        Vector3D::point(0, 0, -sqrt5_2)
+    };
+
+    ico.faces = {
+        Face{std::vector<int>{0, 1, 2}},
+        Face{std::vector<int>{0, 2, 3}},
+        Face{std::vector<int>{0, 3, 4}},
+        Face{std::vector<int>{0, 4, 5}},
+        Face{std::vector<int>{0, 5, 1}},
+        Face{std::vector<int>{1, 6, 2}},
+        Face{std::vector<int>{2, 6, 7}},
+        Face{std::vector<int>{2, 7, 3}},
+        Face{std::vector<int>{3, 7, 8}},
+        Face{std::vector<int>{3, 8, 4}},
+        Face{std::vector<int>{4, 8, 9}},
+        Face{std::vector<int>{4, 9, 5}},
+        Face{std::vector<int>{5, 9, 10}},
+        Face{std::vector<int>{5, 10, 1}},
+        Face{std::vector<int>{1, 10, 6}},
+        Face{std::vector<int>{11, 7, 6}},
+        Face{std::vector<int>{11, 8, 7}},
+        Face{std::vector<int>{11, 9, 8}},
+        Face{std::vector<int>{11, 10, 9}},
+        Face{std::vector<int>{11, 6, 10}}
+    };
+
+    return ico;
+}
+
+Figure createDodeca(const std::vector<double>& color) {
+    Figure dode;
+    dode.color = color;
+
+    // gebruik punten van icosaëder
+    Figure ico = createIco(color);
+
+    // bereken centroïden voor elk vlak
+    for (const Face& face : ico.faces) {
+        Vector3D centroid;
+        for (int idx : face.point_indices) {
+            centroid = centroid + ico.points[idx];
+        }
+        centroid = centroid * (1.0 / 3.0);
+        dode.points.push_back(centroid);
+    }
+
+    // definieer vlakken (12 vijfhoeken)
+    dode.faces = {
+        Face{{0, 1, 2, 3, 4}},
+        Face{{0, 5, 6, 7, 1}},
+        Face{{1, 7, 8, 9, 2}},
+        Face{{2, 9, 10, 11, 3}},
+        Face{{3, 11, 12, 13, 4}},
+        Face{{4, 13, 14, 5, 0}},
+        Face{{19, 18, 17, 16, 15}},
+        Face{{19, 14, 13, 12, 18}},
+        Face{{18, 12, 11, 10, 17}},
+        Face{{17, 10, 9, 8, 16}},
+        Face{{16, 8, 7, 6, 15}},
+        Face{{15, 6, 5, 14, 19}}
+    };
+
+    return dode;
+}
+
+Figure createCylinder(int n, double h, const std::vector<double>& color) {
+    Figure cyl;
+    cyl.color = color;
+
+    // punten voor onder en bovenvlak
+    for(int i = 0; i < n; i++) {
+        double theta = 2 * M_PI * i / n;
+        double x = cos(theta);
+        double y = sin(theta);
+        cyl.points.push_back(Vector3D::point(x, y, 0)); // onder
+        cyl.points.push_back(Vector3D::point(x, y, h)); // boven
+    }
+
+    // zijvlakken
+    for(int i = 0; i < n; i++) {
+        int curr = 2 * i;
+        int next = (2 * (i + 1)) % (2 * n);
+        cyl.faces.push_back({{curr, next, next + 1, curr + 1}});
+    }
+
+    // onder en bovenvlak
+    Face bottom, top;
+    for(int i = 0; i < n; i++) {
+        bottom.point_indices.push_back(2 * i);
+        top.point_indices.push_back(2 * i + 1);
+    }
+    reverse(top.point_indices.begin(), top.point_indices.end());
+    cyl.faces.push_back(bottom);
+    cyl.faces.push_back(top);
+
+    return cyl;
+}
+
+Figure createCone(const int n, const double h, const std::vector<double>& color) {
+    Figure cone;
+    cone.color = color;
+
+    for (int i = 0; i < n; i++) {
+        double angle = 2 * M_PI * i / n;
+        double x = cos(angle);
+        double y = sin(angle);
+
+
+        cone.points.push_back(Vector3D::point(x, y, 0));
+    }
+
+
+    int top_index = cone.points.size();
+    cone.points.push_back(Vector3D::point(0, 0, h));
+
+    for (int i = 0; i < n; i++) {
+        int current = i;
+        int next = (i + 1) % n;
+
+        cone.faces.push_back(Face{{current, next, top_index}});
+    }
+
+    std::vector<int> bottom_face;
+    for (int i = n-1; i >= 0; i--) {
+        bottom_face.push_back(i);
+    }
+    cone.faces.push_back(Face{bottom_face});
+
+    return cone;
+}
+
+// Figure createSphere(const int n, const std::vector<double>& color) {
+//     Figure sphere;
+//     sphere.color = color;
+//
+//     // Start with an icosahedron
+//     Figure ico = createIco(color);
+//     sphere.points = ico.points;
+//
+//     // Clear any existing faces (we'll create our own)
+//     sphere.faces.clear();
+//
+//     // Subdivide each face of the icosahedron
+//     for (const Face& face : ico.faces) {
+//         if (face.point_indices.size() == 3) {
+//             subdivideTriangle(sphere,
+//                               face.point_indices[0],
+//                               face.point_indices[1],
+//                               face.point_indices[2],
+//                               n);
+//         }
+//     }
+//
+//     // Normalize all points to the unit sphere
+//     for (Vector3D& point : sphere.points) {
+//         point.normalise();
+//     }
+//
+//     return sphere;
+// }
+
+Figure createTorus(const double r, const double R, const int n, const int m, const std::vector<double>& color) {
+    Figure torus;
+    torus.color = color;
+
+    // genereer punten
+    for (int i = 0; i < n; i++) {
+        double u = 2 * M_PI * i / n;
+        for (int j = 0; j < m; j++) {
+            double v = 2 * M_PI * j / m;
+
+            // bereken punten volgens parametervergelijking
+            double x = (R + r * cos(v)) * cos(u);
+            double y = (R + r * cos(v)) * sin(u);
+            double z = r * sin(v);
+
+            torus.points.push_back(Vector3D::point(x, y, z));
+        }
+    }
+
+    // genereer faces (vierhoeken)
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            int current = i * m + j;
+            int next_i = (i + 1) % n;
+            int next_j = (j + 1) % m;
+
+            int p1 = current;
+            int p2 = next_i * m + j;
+            int p3 = next_i * m + next_j;
+            int p4 = i * m + next_j;
+
+            // voeg vierhoek toe in tegenwijzerzin
+            torus.faces.push_back(Face{{p1, p2, p3, p4}});
+        }
+    }
+
+    return torus;
+}
+
 std::vector<Line2D> generateLinesFromLSystem(const LParser::LSystem2D &lsystem, const std::vector<double> &color) {
     std::vector<Line2D> lines;
     std::stack<std::tuple<double, double, double> > stateStack; // For branching
@@ -408,6 +626,33 @@ Figure parseFigure(const ini::Configuration& configuration, int index) {
     }
     else if (type == "Octahedron") {
         return createOcta(figure.color);
+    }
+    else if (type == "Icosahedron") {
+        return createIco(figure.color);
+    }
+    else if (type == "Dodecahedron") {
+        return createDodeca(figure.color);
+    }
+    else if (type == "Cylinder") {
+        int n = configuration[sectionName]["n"].as_int_or_die();
+        double h = configuration[sectionName]["height"].as_double_or_die();
+        return createCylinder(n, h, figure.color);
+    }
+    else if (type == "Cone") {
+        int n = configuration[sectionName]["n"].as_int_or_die();
+        double h = configuration[sectionName]["height"].as_double_or_die();
+        return createCone(n, h, figure.color);
+    }
+    // else if (type == "Sphere") {
+    //     int n = configuration[sectionName]["n"].as_int_or_die();
+    //     return createSphere(n, figure.color);
+    // }
+    else if (type == "Torus") {
+        double R = configuration[sectionName]["R"].as_double_or_die();
+        double r = configuration[sectionName]["r"].as_double_or_die();
+        int n = configuration[sectionName]["n"].as_int_or_die();
+        int m = configuration[sectionName]["m"].as_int_or_die();
+        return createTorus(R, r, n, m, figure.color);
     }
     else if (type == "LineDrawing") {
         // parse points for custom figure
