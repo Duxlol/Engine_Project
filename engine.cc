@@ -9,9 +9,9 @@
 #include <cmath>
 #include <stack>
 #include "vector3d.h"
-
 #include "l_parser.h"
 
+// 2D structures
 struct Point2D {
     double x, y;
 };
@@ -19,7 +19,11 @@ struct Point2D {
 struct Line2D {
     Point2D start, end;
     std::vector<double> color;
+    double z1 = 0.0; // Z-coordinate of start point (for Z-buffering)
+    double z2 = 0.0; // Z-coordinate of end point (for Z-buffering)
 };
+
+typedef std::vector<Line2D> Lines2D;
 
 // 3D figure structures
 struct Face {
@@ -33,6 +37,38 @@ struct Figure {
     std::vector<double> color;
 };
 
+typedef std::vector<Figure> Figures3D;
+
+// Class to represent a simple color
+struct Color {
+    double red, green, blue;
+};
+
+// ZBuffer class for Z-buffering
+class ZBuffer {
+private:
+    std::vector<std::vector<double>> buffer;
+    unsigned int width, height;
+
+public:
+    ZBuffer(unsigned int width, unsigned int height)
+        : width(width), height(height), buffer(height, std::vector<double>(width, std::numeric_limits<double>::infinity())) {}
+
+    void set(unsigned int x, unsigned int y, double z) {
+        if (x < width && y < height && z < buffer[y][x]) {
+            buffer[y][x] = z;
+        }
+    }
+
+    double get(unsigned int x, unsigned int y) const {
+        if (x < width && y < height) {
+            return buffer[y][x];
+        }
+        return std::numeric_limits<double>::infinity();
+    }
+};
+
+// Transformation matrices
 Matrix scalingMatrix(double scale) {
     Matrix S;
     S(1, 1) = scale;
@@ -51,7 +87,6 @@ Matrix rotationX(double angle) {
     R(2, 3) = sin(radians);
     R(3, 2) = -sin(radians);
     R(3, 3) = cos(radians);
-    R(4,4) = 1;
 
     return R;
 }
@@ -91,46 +126,99 @@ Matrix translationMatrix(const Vector3D& translation) {
     return T;
 }
 
-// Generates an eye transformation matrix
-Matrix eyeTransformationMatrix(const Vector3D& eye) {
-    // Calculate spherical coordinates from Cartesian
+Matrix eyePointTrans(const Vector3D& eye) {
     double r = sqrt(eye.x * eye.x + eye.y * eye.y + eye.z * eye.z);
     double theta = atan2(eye.y, eye.x);
     double phi = acos(eye.z / r);
 
-    Matrix eyepointMatrix;
-    eyepointMatrix(1, 1) = -sin(theta);
-    eyepointMatrix(1, 2) = -cos(theta)*cos(phi);
-    eyepointMatrix(1, 3) = cos(theta)*sin(phi);
-    eyepointMatrix(1,4) = 0;
+    Matrix V;
+    V(1, 1) = -sin(theta);
+    V(1, 2) = -cos(theta) * cos(phi);
+    V(1, 3) = cos(theta) * sin(phi);
+    V(2, 1) = cos(theta);
+    V(2, 2) = -sin(theta) * cos(phi);
+    V(2, 3) = sin(theta) * sin(phi);
+    V(3, 2) = sin(phi);
+    V(3, 3) = cos(phi);
+    V(4, 3) = -r;
 
-    eyepointMatrix(2, 1) = cos(theta);
-    eyepointMatrix(2, 2) = -sin(theta)*cos(phi);
-    eyepointMatrix(2, 3) = sin(theta)*sin(phi);
-    eyepointMatrix(2,4) = 0;
-
-    eyepointMatrix(3,1) = 0;
-    eyepointMatrix(3, 2) = sin(phi);
-    eyepointMatrix(3, 3) = cos(phi);
-    eyepointMatrix(3,4) = 0;
-
-    eyepointMatrix(4,1) = 0;
-    eyepointMatrix(4,2) = 0;
-    eyepointMatrix(4,3) = -r;
-    eyepointMatrix(4,4) = 1;
-
-    return eyepointMatrix;
+    return V;
 }
 
-// Perspective projection (assumes point is already in eye coordinates)
-Point2D projectPoint(const Vector3D& point) {
-    double d = 1.0; // Fixed distance value as specified in the assignment
-
-    // Perspective projection formulas
-    double x = (d * point.x) / -point.z;
-    double y = (d * -point.y) / -point.z;
-
+Point2D doProjection(const Vector3D& point, double d = 1.0) {
+    double x = -(d * point.x) / point.z;
+    double y = -(d * point.y) / point.z;
     return {x, y};
+}
+
+Lines2D doProjection(const Figures3D& figures, double d = 1.0) {
+    Lines2D lines;
+
+    for (const auto& figure : figures) {
+        // project lines from figure.lines
+        for (const auto& line : figure.lines) {
+            const Vector3D& p1_3d = figure.points[line.first];
+            const Vector3D& p2_3d = figure.points[line.second];
+
+            // skip lines behind eye
+            if (p1_3d.z >= 0 || p2_3d.z >= 0) {
+                continue;
+            }
+
+            // project points to 2D n preserve Z values for z-buffering
+            Point2D p1 = doProjection(p1_3d, d);
+            Point2D p2 = doProjection(p2_3d, d);
+
+            Line2D line2d;
+            line2d.start = p1;
+            line2d.end = p2;
+            line2d.color = figure.color;
+            line2d.z1 = p1_3d.z;
+            line2d.z2 = p2_3d.z;
+
+            lines.push_back(line2d);
+        }
+
+        // project faces for filled polygons
+        for (const auto& face : figure.faces) {
+            if (face.point_indices.size() >= 2) {
+                bool allPointsVisible = true;
+
+                // check if any point in the face is behind the eye
+                for (size_t i = 0; i < face.point_indices.size(); i++) {
+                    if (figure.points[face.point_indices[i]].z >= 0) {
+                        allPointsVisible = false;
+                        break;
+                    }
+                }
+
+                if (!allPointsVisible) {
+                    continue;
+                }
+
+                // convert face to lines
+                for (size_t i = 0; i < face.point_indices.size(); i++) {
+                    size_t j = (i + 1) % face.point_indices.size();
+                    const Vector3D& p1_3d = figure.points[face.point_indices[i]];
+                    const Vector3D& p2_3d = figure.points[face.point_indices[j]];
+
+                    Point2D p1 = doProjection(p1_3d, d);
+                    Point2D p2 = doProjection(p2_3d, d);
+
+                    Line2D line;
+                    line.start = p1;
+                    line.end = p2;
+                    line.color = figure.color;
+                    line.z1 = p1_3d.z;
+                    line.z2 = p2_3d.z;
+
+                    lines.push_back(line);
+                }
+            }
+        }
+    }
+
+    return lines;
 }
 
 std::vector<int> scaleColor(const std::vector<double> &color) {
@@ -140,6 +228,111 @@ std::vector<int> scaleColor(const std::vector<double> &color) {
         scaled[i] = std::clamp(scaled[i], 0, 255);
     }
     return scaled;
+}
+
+// 3D shapes
+Figure createCube(const std::vector<double>& color) {
+    Figure cube;
+    cube.color = color;
+
+    // points of the cube
+    cube.points = {
+        Vector3D::point(1, -1, -1),  // 0
+        Vector3D::point(-1, 1, -1),  // 1
+        Vector3D::point(1, 1, 1),    // 2
+        Vector3D::point(-1, -1, 1),  // 3
+        Vector3D::point(1, 1, -1),   // 4
+        Vector3D::point(-1, -1, -1), // 5
+        Vector3D::point(1, -1, 1),   // 6
+        Vector3D::point(-1, 1, 1)    // 7
+    };
+
+    // define faces with point indices
+    Face f1, f2, f3, f4, f5, f6;
+    f1.point_indices = {0, 4, 2, 6};
+    f2.point_indices = {4, 1, 7, 2};
+    f3.point_indices = {1, 5, 3, 7};
+    f4.point_indices = {5, 0, 6, 3};
+    f5.point_indices = {6, 2, 7, 3};
+    f6.point_indices = {0, 5, 1, 4};
+
+    cube.faces = {f1, f2, f3, f4, f5, f6};
+
+    // define lines for wireframe drawing
+    cube.lines = {
+        {0, 4}, {4, 1}, {1, 5}, {5, 0},
+        {2, 6}, {6, 3}, {3, 7}, {7, 2},
+        {0, 6}, {4, 2}, {1, 7}, {5, 3}
+    };
+
+    return cube;
+}
+
+Figure createTetra(const std::vector<double>& color) {
+    Figure tetra;
+    tetra.color = color;
+
+    // points of the tetrahedron
+    tetra.points = {
+        Vector3D::point(1, -1, -1),  // 0
+        Vector3D::point(-1, 1, -1),  // 1
+        Vector3D::point(1, 1, 1),    // 2
+        Vector3D::point(-1, -1, 1)   // 3
+    };
+
+    // define faces with point indices
+    Face f1, f2, f3, f4;
+    f1.point_indices = {0, 1, 2};
+    f2.point_indices = {1, 3, 2};
+    f3.point_indices = {0, 3, 1};
+    f4.point_indices = {0, 2, 3};
+
+    tetra.faces = {f1, f2, f3, f4};
+
+    // define lines for wireframe drawing
+    tetra.lines = {
+        {0, 1}, {1, 2}, {2, 0},
+        {0, 3}, {1, 3}, {2, 3}
+    };
+
+    return tetra;
+}
+
+Figure createOcta(const std::vector<double>& color) {
+    Figure octa;
+    octa.color = color;
+
+    // points of the octahedron
+    octa.points = {
+        Vector3D::point(1, 0, 0),   // 0
+        Vector3D::point(0, 1, 0),   // 1
+        Vector3D::point(-1, 0, 0),  // 2
+        Vector3D::point(0, -1, 0),  // 3
+        Vector3D::point(0, 0, -1),  // 4
+        Vector3D::point(0, 0, 1)    // 5
+    };
+
+    // define faces using point indices
+    Face f1, f2, f3, f4, f5, f6, f7, f8;
+    f1.point_indices = {0, 1, 5};
+    f2.point_indices = {1, 2, 5};
+    f3.point_indices = {2, 3, 5};
+    f4.point_indices = {3, 0, 5};
+    f5.point_indices = {1, 0, 4};
+    f6.point_indices = {2, 1, 4};
+    f7.point_indices = {3, 2, 4};
+    f8.point_indices = {0, 3, 4};
+
+    octa.faces = {f1, f2, f3, f4, f5, f6, f7, f8};
+
+    // define lines for wireframe drawing
+    octa.lines = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0},
+        {0, 5}, {1, 5}, {2, 5}, {3, 5},
+        {0, 4}, {1, 4}, {2, 4}, {3, 4}
+    };
+
+    return octa;
 }
 
 std::vector<Line2D> generateLinesFromLSystem(const LParser::LSystem2D &lsystem, const std::vector<double> &color) {
@@ -164,10 +357,10 @@ std::vector<Line2D> generateLinesFromLSystem(const LParser::LSystem2D &lsystem, 
 
     for (char c: current) {
         if (c == '(') {
-            // Save current state
+            // save current state
             stateStack.push(std::make_tuple(x, y, angle));
         } else if (c == ')') {
-            // Restore previous state
+            // restore previous state
             if (!stateStack.empty()) {
                 auto [savedX, savedY, savedAngle] = stateStack.top();
                 stateStack.pop();
@@ -180,7 +373,13 @@ std::vector<Line2D> generateLinesFromLSystem(const LParser::LSystem2D &lsystem, 
             double newX = x + cos(angle);
             double newY = y + sin(angle);
             if (drawLine) {
-                lines.push_back({{x, y}, {newX, newY}, color});
+                Line2D line;
+                line.start = {x, y};
+                line.end = {newX, newY};
+                line.color = color;
+                line.z1 = 1.0;
+                line.z2 = 1.0;
+                lines.push_back(line);
             }
             x = newX;
             y = newY;
@@ -198,33 +397,56 @@ Figure parseFigure(const ini::Configuration& configuration, int index) {
     std::string sectionName = "Figure" + std::to_string(index);
     Figure figure;
 
-    // Parse color
+    std::string type = configuration[sectionName]["type"].as_string_or_die();
     figure.color = configuration[sectionName]["color"].as_double_tuple_or_die();
 
-    // Parse points
-    int nrPoints = configuration[sectionName]["nrPoints"].as_int_or_die();
-    figure.points.resize(nrPoints);
-
-    for (int i = 0; i < nrPoints; ++i) {
-        std::string pointName = "point" + std::to_string(i);
-        std::vector<double> point = configuration[sectionName][pointName].as_double_tuple_or_die();
-        figure.points[i] = Vector3D::point(point[0], point[1], point[2]);
+    if (type == "Cube") {
+        return createCube(figure.color);
     }
+    else if (type == "Tetrahedron") {
+        return createTetra(figure.color);
+    }
+    else if (type == "Octahedron") {
+        return createOcta(figure.color);
+    }
+    else if (type == "LineDrawing") {
+        // parse points for custom figure
+        int nrPoints = configuration[sectionName]["nrPoints"].as_int_or_die();
+        figure.points.resize(nrPoints);
 
-    // Parse lines
-    int nrLines = configuration[sectionName]["nrLines"].as_int_or_die();
-    figure.lines.resize(nrLines);
+        for (int i = 0; i < nrPoints; ++i) {
+            std::string pointName = "point" + std::to_string(i);
+            std::vector<double> point = configuration[sectionName][pointName].as_double_tuple_or_die();
+            figure.points[i] = Vector3D::point(point[0], point[1], point[2]);
+        }
 
-    for (int i = 0; i < nrLines; ++i) {
-        std::string lineName = "line" + std::to_string(i);
-        std::vector<int> line = configuration[sectionName][lineName].as_int_tuple_or_die();
-        figure.lines[i] = std::make_pair(line[0], line[1]);
+        // parse lines
+        int nrLines = configuration[sectionName]["nrLines"].as_int_or_die();
+        figure.lines.resize(nrLines);
+
+        for (int i = 0; i < nrLines; ++i) {
+            std::string lineName = "line" + std::to_string(i);
+            std::vector<int> line = configuration[sectionName][lineName].as_int_tuple_or_die();
+            figure.lines[i] = std::make_pair(line[0], line[1]);
+        }
+
+        int nrFaces = configuration[sectionName]["nrFaces"].as_int_or_default(-1);
+        if (nrFaces >= 0) {
+            figure.faces.resize(nrFaces);
+
+            for (int i = 0; i < nrFaces; ++i) {
+                std::string faceName = "face" + std::to_string(i);
+                std::vector<int> faceIndices = configuration[sectionName][faceName].as_int_tuple_or_die();
+                Face face;
+                face.point_indices = faceIndices;
+                figure.faces[i] = face;
+            }
+        }
     }
 
     return figure;
 }
 
-// Apply all transformations to a figure
 void transformFigure(Figure& figure, const ini::Configuration& configuration, int index) {
     std::string sectionName = "Figure" + std::to_string(index);
 
@@ -234,58 +456,20 @@ void transformFigure(Figure& figure, const ini::Configuration& configuration, in
     double rotateZ = configuration[sectionName]["rotateZ"].as_double_or_die();
     std::vector<double> center = configuration[sectionName]["center"].as_double_tuple_or_die();
 
-    // Create transformation matrices
     Matrix S = scalingMatrix(scale);
     Matrix Rx = rotationX(rotateX);
     Matrix Ry = rotationY(rotateY);
     Matrix Rz = rotationZ(rotateZ);
     Matrix T = translationMatrix(Vector3D::point(center[0], center[1], center[2]));
-
-    // Combined transformation matrix
     Matrix transform = S * Rx * Ry * Rz * T;
 
-    // Apply transformation to all points
     for (Vector3D& point : figure.points) {
         point = point * transform;
     }
 }
-
-std::vector<Line2D> applyEyeAndProjection(const std::vector<Figure>& figures, const Vector3D& eye) {
-    // Create eye transformation matrix
-    Matrix eyeMatrix = eyeTransformationMatrix(eye);
-
-    std::vector<Line2D> lines2D;
-
-    for (const Figure& figure : figures) {
-        // Transform all points to eye coordinates
-        std::vector<Vector3D> transformedPoints;
-        transformedPoints.reserve(figure.points.size());
-
-        for (const Vector3D& point : figure.points) {
-            transformedPoints.push_back(point * eyeMatrix);
-        }
-
-        // Project all points and create 2D lines
-        for (const std::pair<int, int>& line : figure.lines) {
-            int start = line.first;
-            int end = line.second;
-
-            // Skip lines with negative z (behind the eye)
-            if (transformedPoints[start].z >= 0 || transformedPoints[end].z >= 0) continue;
-
-            Point2D startPoint = projectPoint(transformedPoints[start]);
-            Point2D endPoint = projectPoint(transformedPoints[end]);
-
-            lines2D.push_back({startPoint, endPoint, figure.color});
-        }
-    }
-
-    return lines2D;
-}
-
 img::EasyImage draw2DLines(const std::vector<Line2D>& lines, int size, const std::vector<double>& bgColor) {
     if (lines.empty()) {
-        std::cerr << "lines is empty" << std::endl;
+        std::cerr << "Lines vector is empty" << std::endl;
         return img::EasyImage(1, 1, img::Color(0, 0, 0));
     }
     double xmin = lines[0].start.x, xmax = lines[0].start.x;
@@ -344,11 +528,11 @@ img::EasyImage generate_image(const ini::Configuration &configuration) {
     std::vector<double> backgroundColor = configuration["General"]["backgroundcolor"].as_double_tuple_or_die();
 
     if (type == "Wireframe") {
-        // Parse eye position
+        // parse eye position
         std::vector<double> eyePos = configuration["General"]["eye"].as_double_tuple_or_die();
         Vector3D eye = Vector3D::point(eyePos[0], eyePos[1], eyePos[2]);
 
-        // Parse figures
+        // parse figures
         int nrFigures = configuration["General"]["nrFigures"].as_int_or_die();
         std::vector<Figure> figures(nrFigures);
 
@@ -357,11 +541,20 @@ img::EasyImage generate_image(const ini::Configuration &configuration) {
             transformFigure(figures[i], configuration, i);
         }
 
-        // Apply eye transformation and projection
-        std::vector<Line2D> lines2D = applyEyeAndProjection(figures, eye);
+        // apply eye transformation
+        Matrix eyeMatrix = eyePointTrans(eye);
 
+        // transform all points to eye coordinates
+        for (auto& figure : figures) {
+            for (auto& point : figure.points) {
+                point = point * eyeMatrix;
+            }
+        }
 
-        // Draw the 2D lines
+        // generate 2D lines through projection
+        std::vector<Line2D> lines2D = doProjection(figures, 1.0);
+
+        // draw the 2D lines
         return draw2DLines(lines2D, size, backgroundColor);
     }
     else if (type == "2DLSystem") {
@@ -418,7 +611,7 @@ int main(int argc, char const *argv[]) {
                     std::ofstream f_out(fileName.c_str(), std::ios::trunc | std::ios::out | std::ios::binary);
                     f_out << image;
                 } catch (std::exception &ex) {
-                    std::cerr << "Failed to write  image to file: " << ex.what() << std::endl;
+                    std::cerr << "Failed to write image to file: " << ex.what() << std::endl;
                     retVal = 1;
                 }
             } else {
