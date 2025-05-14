@@ -10,6 +10,7 @@
 #include <stack>
 #include "vector3d.h"
 #include "l_parser.h"
+#include "zbuffer.h"
 
 // 2D structures
 struct Point2D {
@@ -42,30 +43,6 @@ typedef std::vector<Figure> Figures3D;
 // Class to represent a simple color
 struct Color {
     double red, green, blue;
-};
-
-// ZBuffer class for Z-buffering
-class ZBuffer {
-private:
-    std::vector<std::vector<double>> buffer;
-    unsigned int width, height;
-
-public:
-    ZBuffer(unsigned int width, unsigned int height)
-        : width(width), height(height), buffer(height, std::vector<double>(width, std::numeric_limits<double>::infinity())) {}
-
-    void set(unsigned int x, unsigned int y, double z) {
-        if (x < width && y < height && z < buffer[y][x]) {
-            buffer[y][x] = z;
-        }
-    }
-
-    double get(unsigned int x, unsigned int y) const {
-        if (x < width && y < height) {
-            return buffer[y][x];
-        }
-        return std::numeric_limits<double>::infinity();
-    }
 };
 
 /////////////////////////////
@@ -990,6 +967,87 @@ img::EasyImage generate_image(const ini::Configuration &configuration) {
         std::vector<Line2D> lines2D = generateLinesFromLSystem(lsystem, color);
         return draw2DLines(lines2D, size, backgroundColor);
     }
+
+    else if (type == "ZBufferedWireframe") {
+    std::vector<double> eyePos = configuration["General"]["eye"].as_double_tuple_or_die();
+    Vector3D eye = Vector3D::point(eyePos[0], eyePos[1], eyePos[2]);
+
+    int nrFigures = configuration["General"]["nrFigures"].as_int_or_die();
+    std::vector<Figure> figures(nrFigures);
+
+    for (int i = 0; i < nrFigures; ++i) {
+        figures[i] = parseFigure(configuration, i);
+        transformFigure(figures[i], configuration, i);
+    }
+
+    Matrix eyeMatrix = eyePointTrans(eye);
+
+    for (auto& figure : figures) {
+        for (auto& point : figure.points) {
+            point = point * eyeMatrix;
+        }
+    }
+
+    Lines2D lines2D = doProjection(figures, 1.0);
+
+    if (lines2D.empty()) {
+        return img::EasyImage(1, 1, img::Color(0, 0, 0));
+    }
+
+    double xmin = lines2D[0].start.x, xmax = lines2D[0].start.x;
+    double ymin = lines2D[0].start.y, ymax = lines2D[0].start.y;
+    for (const auto& line : lines2D) {
+        xmin = std::min({xmin, line.start.x, line.end.x});
+        xmax = std::max({xmax, line.start.x, line.end.x});
+        ymin = std::min({ymin, line.start.y, line.end.y});
+        ymax = std::max({ymax, line.start.y, line.end.y});
+    }
+
+    double xrange = xmax - xmin;
+    double yrange = ymax - ymin;
+    if (xrange == 0) xrange = 1;
+    if (yrange == 0) yrange = 1;
+
+    int imageWidth, imageHeight;
+    if (xrange > yrange) {
+        imageWidth = size;
+        imageHeight = static_cast<int>(size * (yrange / xrange));
+    } else {
+        imageHeight = size;
+        imageWidth = static_cast<int>(size * (xrange / yrange));
+    }
+
+    double scale = 0.95 * std::min(imageWidth / xrange, imageHeight / yrange);
+    double dx = (imageWidth / 2.0) - (scale * (xmin + xmax)) / 2.0;
+    double dy = (imageHeight / 2.0) - (scale * (ymin + ymax)) / 2.0;
+
+    img::EasyImage image(imageWidth, imageHeight);
+    std::vector<int> bgScaled = scaleColor(backgroundColor);
+    image.clear(img::Color(bgScaled[0], bgScaled[1], bgScaled[2]));
+    ZBuffer zbuffer(imageWidth, imageHeight);
+
+    for (const auto& line : lines2D) {
+        Point2D p1 = line.start;
+        Point2D p2 = line.end;
+        p1.x = p1.x * scale + dx;
+        p1.y = p1.y * scale + dy;
+        p2.x = p2.x * scale + dx;
+        p2.y = p2.y * scale + dy;
+
+        int x1 = static_cast<int>(std::round(p1.x));
+        int y1 = static_cast<int>(std::round(p1.y));
+        int x2 = static_cast<int>(std::round(p2.x));
+        int y2 = static_cast<int>(std::round(p2.y));
+
+        std::vector<int> lineColor = scaleColor(line.color);
+        img::Color color(lineColor[0], lineColor[1], lineColor[2]);
+
+        image.draw_zbuf_line(zbuffer, x1, y1, line.z1, x2, y2, line.z2, color);
+    }
+
+        return image;
+    }
+
 
     return img::EasyImage();
 }

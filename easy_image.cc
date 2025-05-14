@@ -192,6 +192,52 @@ void img::EasyImage::clear(Color color)
 	}
 }
 
+void img::EasyImage::draw_zbuf_line(ZBuffer& zbuffer,
+								   int x0, int y0, double z0,
+								   int x1, int y1, double z1,
+								   const Color& color) {
+	if (x0 >= width || y0 >= height || x1 >= width || y1 >= height) {
+		std::stringstream ss;
+		ss << "Drawing line from (" << x0 << "," << y0 << ") to (" << x1 << "," << y1 << ") in image of width " << width << " and height " << height;
+		throw std::runtime_error(ss.str());
+	}
+
+	int dx = abs(static_cast<int>(x1) - static_cast<int>(x0));
+	int dy = abs(static_cast<int>(y1) - static_cast<int>(y0));
+	int sx = x0 < x1 ? 1 : -1;
+	int sy = y0 < y1 ? 1 : -1;
+	int err = dx - dy;
+
+	int current_x = x0;
+	int current_y = y0;
+	double total_steps = dx + dy;
+	if (total_steps == 0) total_steps = 1;
+
+	while (true) {
+		double t = (abs(current_x - x0) + abs(current_y - y0)) / total_steps;
+		double z = z0 + t * (z1 - z0);
+		double inv_z = 1.0 / z;
+
+		if (current_x < width && current_y < height) {
+			if (inv_z < zbuffer.get(current_x, current_y)) {
+				zbuffer.set(current_x, current_y, inv_z);
+				(*this)(current_x, current_y) = color;
+			}
+		}
+
+		if (current_x == x1 && current_y == y1) break;
+		int e2 = 2 * err;
+		if (e2 > -dy) {
+			err -= dy;
+			current_x += sx;
+		}
+		if (e2 < dx) {
+			err += dx;
+			current_y += sy;
+		}
+	}
+}
+
 img::Color& img::EasyImage::operator()(unsigned int x, unsigned int y)
 {
 	assert(x < this->width);
