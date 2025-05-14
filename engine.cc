@@ -68,7 +68,10 @@ public:
     }
 };
 
-// Transformation matrices
+/////////////////////////////
+// TRANSFORMATION MATRICES //
+/////////////////////////////
+
 Matrix scalingMatrix(double scale) {
     Matrix S;
     S(1, 1) = scale;
@@ -144,6 +147,10 @@ Matrix eyePointTrans(const Vector3D& eye) {
 
     return V;
 }
+
+////////////////
+// PROJECTION //
+////////////////
 
 Point2D doProjection(const Vector3D& point, double d = 1.0) {
     double x = -(d * point.x) / point.z;
@@ -221,6 +228,8 @@ Lines2D doProjection(const Figures3D& figures, double d = 1.0) {
     return lines;
 }
 
+
+
 std::vector<int> scaleColor(const std::vector<double> &color) {
     std::vector<int> scaled(3);
     for (int i = 0; i < 3; ++i) {
@@ -230,7 +239,10 @@ std::vector<int> scaleColor(const std::vector<double> &color) {
     return scaled;
 }
 
-// 3D shapes
+///////////////
+// 3D SHAPES //
+///////////////
+
 Figure createCube(const std::vector<double>& color) {
     Figure cube;
     cube.color = color;
@@ -488,13 +500,13 @@ Figure createTorus(const double r, const double R, const int n, const int m, con
     Figure torus;
     torus.color = color;
 
-    // genereer punten
+    // Genereer punten
     for (int i = 0; i < n; i++) {
         double u = 2 * M_PI * i / n;
         for (int j = 0; j < m; j++) {
             double v = 2 * M_PI * j / m;
 
-            // bereken punten volgens parametervergelijking
+            // Bereken punten volgens parametervergelijking
             double x = (R + r * cos(v)) * cos(u);
             double y = (R + r * cos(v)) * sin(u);
             double z = r * sin(v);
@@ -503,7 +515,7 @@ Figure createTorus(const double r, const double R, const int n, const int m, con
         }
     }
 
-    // genereer faces (vierhoeken)
+    // Genereer faces (vierhoeken)
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             int current = i * m + j;
@@ -515,7 +527,7 @@ Figure createTorus(const double r, const double R, const int n, const int m, con
             int p3 = next_i * m + next_j;
             int p4 = i * m + next_j;
 
-            // voeg vierhoek toe in tegenwijzerzin
+            // Voeg vierhoek toe in tegenwijzerzin
             torus.faces.push_back(Face{{p1, p2, p3, p4}});
         }
     }
@@ -524,25 +536,40 @@ Figure createTorus(const double r, const double R, const int n, const int m, con
 }
 
 Figure createSphere(int iterations, const std::vector<double>& color) {
-    Figure sphere = createIco(color); // Start met een icosaëder
+    Figure sphere = createIco(color);
+    for (auto& point : sphere.points) {
+        double length = sqrt(point.x*point.x + point.y*point.y + point.z*point.z);
+        if (length > 0) {
+            point.x /= length;
+            point.y /= length;
+            point.z /= length;
+        }
+    }
 
     for (int it = 0; it < iterations; it++) {
         std::vector<Face> newFaces;
         std::map<std::pair<int, int>, int> edgeMidpointCache;
-
-        // Hulpfunctie om middenpunten te vinden of te genereren
         auto getMidpoint = [&](int p1Idx, int p2Idx) {
             if (p1Idx > p2Idx) std::swap(p1Idx, p2Idx);
             auto key = std::make_pair(p1Idx, p2Idx);
-
             if (edgeMidpointCache.count(key)) {
                 return edgeMidpointCache[key];
             }
 
-            Vector3D p1 = sphere.points[p1Idx];
-            Vector3D p2 = sphere.points[p2Idx];
-            Vector3D midpoint = (p1 + p2) * 0.5;
-            midpoint.normalise(); // Zorg dat het punt op de bol ligt
+            const Vector3D& p1 = sphere.points[p1Idx];
+            const Vector3D& p2 = sphere.points[p2Idx];
+
+            Vector3D midpoint;
+            midpoint.x = (p1.x + p2.x) * 0.5;
+            midpoint.y = (p1.y + p2.y) * 0.5;
+            midpoint.z = (p1.z + p2.z) * 0.5;
+
+            double length = sqrt(midpoint.x*midpoint.x + midpoint.y*midpoint.y + midpoint.z*midpoint.z);
+            if (length > 0) {
+                midpoint.x /= length;
+                midpoint.y /= length;
+                midpoint.z /= length;
+            }
 
             sphere.points.push_back(midpoint);
             int newIdx = sphere.points.size() - 1;
@@ -550,132 +577,154 @@ Figure createSphere(int iterations, const std::vector<double>& color) {
             return newIdx;
         };
 
-        // Subdivide elk driehoekig vlak
         for (const Face& face : sphere.faces) {
-            int a = face.point_indices[0];
-            int b = face.point_indices[1];
-            int c = face.point_indices[2];
-
-            int ab = getMidpoint(a, b);
-            int bc = getMidpoint(b, c);
-            int ca = getMidpoint(c, a);
-
-            // Voeg 4 nieuwe driehoeken toe
-            newFaces.push_back(Face{{a, ab, ca}});
-            newFaces.push_back(Face{{b, bc, ab}});
-            newFaces.push_back(Face{{c, ca, bc}});
-            newFaces.push_back(Face{{ab, bc, ca}});
+            if (face.point_indices.size() >= 3) {
+                int a = face.point_indices[0];
+                int b = face.point_indices[1];
+                int c = face.point_indices[2];
+                int ab = getMidpoint(a, b);
+                int bc = getMidpoint(b, c);
+                int ca = getMidpoint(c, a);
+                newFaces.push_back(Face{{a, ab, ca}});
+                newFaces.push_back(Face{{b, bc, ab}});
+                newFaces.push_back(Face{{c, ca, bc}});
+                newFaces.push_back(Face{{ab, bc, ca}});
+            }
         }
         sphere.faces = newFaces;
     }
+    sphere.lines.clear();
+    std::set<std::pair<int, int>> processedEdges;
 
-    // Genereer lijnen voor wireframe
     for (const Face& face : sphere.faces) {
         for (size_t i = 0; i < face.point_indices.size(); i++) {
-            int j = (i + 1) % face.point_indices.size();
-            sphere.lines.push_back({face.point_indices[i], face.point_indices[j]});
+            size_t j = (i + 1) % face.point_indices.size();
+            int p1 = face.point_indices[i];
+            int p2 = face.point_indices[j];
+            if (p1 > p2) std::swap(p1, p2);
+            auto edge = std::make_pair(p1, p2);
+            if (processedEdges.find(edge) == processedEdges.end()) {
+                sphere.lines.push_back({p1, p2});
+                processedEdges.insert(edge);
+            }
         }
     }
-
     return sphere;
 }
 
-// Figure parse3DLSystem(const std::string& filename, const std::vector<double>& color) {
-//     std::ifstream in(filename);
-//     LParser::LSystem3D lSystem;
-//     in >> lSystem;
-//     in.close();
-//
-//     Figure figure;
-//     figure.color = color;
-//
-//     std::string current = lSystem.get_initiator();
-//     for (unsigned int i = 0; i < lSystem.get_nr_iterations(); i++) {
-//         std::string next;
-//         for (char c : current) {
-//             if (lSystem.get_alphabet().count(c)) {
-//                 next += lSystem.get_replacement(c);
-//             } else {
-//                 next += c;
-//             }
-//         }
-//         current = next;
-//     }
-//
-//     Vector3D position(0, 0, 0);
-//     Vector3D H(1, 0, 0); // Heading
-//     Vector3D L(0, 1, 0); // Left
-//     Vector3D U(0, 0, 1); // Up
-//     std::stack<std::tuple<Vector3D, Vector3D, Vector3D, Vector3D>> stateStack;
-//     double angle = lSystem.get_angle() * (M_PI / 180.0);
-//
-//     std::vector<Vector3D> points;
-//     std::vector<std::pair<int, int>> lines;
-//     int pointIdx = 0;
-//
-//     for (char c : current) {
-//         switch (c) {
-//             case '+': // Draai linksom om H-as
-//                 L = L * cos(angle) + U * sin(angle);
-//                 U = L.cross(H);
-//                 break;
-//             case '-': // Draai rechtsom om H-as
-//                 L = L * cos(-angle) + U * sin(-angle);
-//                 U = L.cross(H);
-//                 break;
-//             case '^': // Draai om L-as
-//                 H = H * cos(angle) + U * sin(angle);
-//                 U = H.cross(L);
-//                 break;
-//             case '&': // Draai om L-as (negatief)
-//                 H = H * cos(-angle) + U * sin(-angle);
-//                 U = H.cross(L);
-//                 break;
-//             case '\\': // Roll linksom om U-as
-//                 H = H * cos(angle) + L * sin(angle);
-//                 L = H.cross(U);
-//                 break;
-//             case '/': // Roll rechtsom om U-as
-//                 H = H * cos(-angle) + L * sin(-angle);
-//                 L = H.cross(U);
-//                 break;
-//             case '|': // Keer richting om
-//                 H = H * -1;
-//                 L = L * -1;
-//                 break;
-//             case '(': // Sla staat op
-//                 stateStack.push({position, H, L, U});
-//                 break;
-//             case ')': // Herstel staat
-//                 if (!stateStack.empty()) {
-//                     auto [savedPos, savedH, savedL, savedU] = stateStack.top();
-//                     stateStack.pop();
-//                     position = savedPos;
-//                     H = savedH;
-//                     L = savedL;
-//                     U = savedU;
-//                 }
-//                 break;
-//             default:
-//                 if (lSystem.draw(c)) {
-//                     Vector3D newPos = position + H;
-//                     points.push_back(position);
-//                     points.push_back(newPos);
-//                     lines.push_back({pointIdx, pointIdx + 1});
-//                     pointIdx += 2;
-//                     position = newPos;
-//                 } else {
-//                     position = position + H;
-//                 }
-//                 break;
-//         }
-//     }
-//
-//     figure.points = points;
-//     figure.lines = lines;
-//     return figure;
-// }
+////////////////////
+// 3D L SYSTEMEN //
+////////////////////
+///
+Figure create3DLSystemFigure(const std::string& inputfile, const std::vector<double> &color) {
+    LParser::LSystem3D l_system;
+    std::ifstream input_stream(inputfile);
+    input_stream >> l_system;
+    input_stream.close();
 
+    Figure figure;
+    figure.color = color;
+
+    Vector3D position = Vector3D::point(0, 0, 0);
+    Vector3D H = Vector3D::vector(1, 0, 0);
+    Vector3D L = Vector3D::vector(0, 1, 0);
+    Vector3D U = Vector3D::vector(0, 0, 1);
+    std::stack<std::tuple<Vector3D, Vector3D, Vector3D, Vector3D>> state_stack;
+
+    // Build the expanded string
+    std::string current = l_system.get_initiator();
+    for (unsigned int i = 0; i < l_system.get_nr_iterations(); ++i) {
+        std::string next;
+        for (char c : current) {
+            if (l_system.get_alphabet().count(c)) {
+                next += l_system.get_replacement(c);
+            } else {
+                next += c;
+            }
+        }
+        current = next;
+    }
+
+    // Process the expanded string
+    for (char c : current) {
+        if (c == '+') { // Rotate left around U (Z-axis)
+            double angle = l_system.get_angle() * (M_PI / 180.0);
+            Vector3D new_H = H * cos(angle) + L * sin(angle);
+            Vector3D new_L = L * cos(angle) - H * sin(angle);
+            H = new_H;
+            L = new_L;
+        }
+        else if (c == '-') { // Rotate right around U (Z-axis)
+            double angle = -l_system.get_angle() * (M_PI / 180.0);
+            Vector3D new_H = H * cos(angle) + L * sin(angle);
+            Vector3D new_L = L * cos(angle) - H * sin(angle);
+            H = new_H;
+            L = new_L;
+        }
+        else if (c == '^') { // Pitch up (around L/Y-axis)
+            double angle = l_system.get_angle() * (M_PI / 180.0);
+            Vector3D new_H = H * cos(angle) + U * sin(angle);
+            Vector3D new_U = U * cos(angle) - H * sin(angle);
+            H = new_H;
+            U = new_U;
+        }
+        else if (c == '&') { // Pitch down (around L/Y-axis)
+            double angle = -l_system.get_angle() * (M_PI / 180.0);
+            Vector3D new_H = H * cos(angle) + U * sin(angle);
+            Vector3D new_U = U * cos(angle) - H * sin(angle);
+            H = new_H;
+            U = new_U;
+        }
+        else if (c == '\\') { // Roll left (around H/X-axis)
+            double angle = l_system.get_angle() * (M_PI / 180.0);
+            Vector3D new_L = L * cos(angle) - U * sin(angle);
+            Vector3D new_U = U * cos(angle) + L * sin(angle);
+            L = new_L;
+            U = new_U;
+        }
+        else if (c == '/') { // Roll right (around H/X-axis)
+            double angle = -l_system.get_angle() * (M_PI / 180.0);
+            Vector3D new_L = L * cos(angle) - U * sin(angle);
+            Vector3D new_U = U * cos(angle) + L * sin(angle);
+            L = new_L;
+            U = new_U;
+        }
+        else if (c == '|') { // Turn 180 degrees
+            H = -H;
+            L = -L;
+        }
+        else if (c == '(') { // Push state
+            state_stack.push(std::make_tuple(position, H, L, U));
+        }
+        else if (c == ')') { // Pop state
+            if (!state_stack.empty()) {
+                auto [s_pos, s_H, s_L, s_U] = state_stack.top();
+                state_stack.pop();
+                position = s_pos;
+                H = s_H;
+                L = s_L;
+                U = s_U;
+            }
+        }
+        else if (l_system.get_alphabet().count(c) && l_system.draw(c)) {
+            // Draw line
+            Vector3D new_pos = position + H;
+
+            // Add points and face
+            figure.points.push_back(position);
+            figure.points.push_back(new_pos);
+
+            Face face;
+            face.point_indices.push_back(figure.points.size() - 2);
+            face.point_indices.push_back(figure.points.size() - 1);
+            figure.faces.push_back(face);
+
+            position = new_pos;
+        }
+    }
+
+    return figure;
+}
 std::vector<Line2D> generateLinesFromLSystem(const LParser::LSystem2D &lsystem, const std::vector<double> &color) {
     std::vector<Line2D> lines;
     std::stack<std::tuple<double, double, double> > stateStack; // For branching
@@ -775,13 +824,13 @@ Figure parseFigure(const ini::Configuration& configuration, int index) {
         double r = configuration[sectionName]["r"].as_double_or_die();
         int n = configuration[sectionName]["n"].as_int_or_die();
         int m = configuration[sectionName]["m"].as_int_or_die();
-        return createTorus(R, r, n, m, figure.color);
+        return createTorus(r, R, n, m, figure.color);
     }
 
-    // else if (type == "3DLSystem") {
-    //     std::string inputfile = configuration[sectionName]["inputfile"].as_string_or_die();
-    //     return parse3DLSystem(inputfile, figure.color);
-    // }
+    else if (type == "3DLSystem") {
+        std::string inputfile = configuration[sectionName]["inputfile"].as_string_or_die();
+        figure = create3DLSystemFigure(inputfile, figure.color);
+    }
 
     else if (type == "LineDrawing") {
         // parse points for custom figure
@@ -883,8 +932,8 @@ img::EasyImage draw2DLines(const std::vector<Line2D>& lines, int size, const std
         p1.y = p1.y * scale + dy;
         p2.x = p2.x * scale + dx;
         p2.y = p2.y * scale + dy;
-        int y1 = image.get_height() - static_cast<int>(std::round(p1.y)) - 1;
-        int y2 = image.get_height() - static_cast<int>(std::round(p2.y)) - 1;
+        int y1 = static_cast<int>(std::round(p1.y));
+        int y2 = static_cast<int>(std::round(p2.y));
         int x1 = static_cast<int>(std::round(p1.x));
         int x2 = static_cast<int>(std::round(p2.x));
 
